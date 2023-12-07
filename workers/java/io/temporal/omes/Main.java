@@ -14,18 +14,17 @@ import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowClientOptions;
+import io.temporal.common.converter.*;
 import io.temporal.common.reporter.MicrometerClientStatsReporter;
 import io.temporal.serviceclient.SimpleSslContextBuilder;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
 import io.temporal.worker.Worker;
 import io.temporal.worker.WorkerFactory;
-import io.temporal.worker.WorkerFactoryOptions;
 import io.temporal.worker.WorkerOptions;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -36,8 +35,6 @@ import picocli.CommandLine;
 
 @CommandLine.Command(name = "features", description = "Runs Java features")
 public class Main implements Runnable {
-  // private static final Logger log = LoggerFactory.getLogger(Main.class);
-
   @CommandLine.Option(
       names = {"-q", "--task-queue"},
       description = "Task queue to use",
@@ -122,15 +119,6 @@ public class Main implements Runnable {
       description = "Max concurrent workflow tasks")
   private int maxConcurrentWorkflowTasks;
 
-  @CommandLine.Option(names = "--cache-size", description = "Worker cache size")
-  private int cacheSize;
-
-  @CommandLine.Option(
-      names = "--sticky-timeout-ms",
-      description = "Sticky cache schedule to start timeout (ms)",
-      defaultValue = "0")
-  private Integer stickyCacheScheduleToStartTimeoutMs;
-
   @Override
   public void run() {
     // Configure TLS
@@ -193,9 +181,23 @@ public class Main implements Runnable {
                 .setMetricsScope(scope)
                 .build());
 
+    PayloadConverter[] arr = {
+      new NullPayloadConverter(),
+      new ByteArrayPayloadConverter(),
+      new PassthroughDataConverter(),
+      new ProtobufJsonPayloadConverter(),
+      new ProtobufPayloadConverter(),
+      new JacksonJsonPayloadConverter()
+    };
+
+    GlobalDataConverter.register(new DefaultDataConverter(arr));
     WorkflowClient client =
         WorkflowClient.newInstance(
-            service, WorkflowClientOptions.newBuilder().setNamespace(namespace).build());
+            service,
+            WorkflowClientOptions.newBuilder()
+                .setDataConverter(new DefaultDataConverter(arr))
+                .setNamespace(namespace)
+                .build());
 
     // Collect task queues to run workers for (if there is a suffix end, we run multiple)
     List<String> taskQueues;
@@ -208,16 +210,12 @@ public class Main implements Runnable {
       }
     }
     // Create worker factory
-    WorkerFactoryOptions.Builder workerFactoryOptions = WorkerFactoryOptions.newBuilder();
-    workerFactoryOptions.setWorkflowCacheSize(cacheSize);
-    WorkerFactory workerFactory = WorkerFactory.newInstance(client, workerFactoryOptions.build());
+    WorkerFactory workerFactory = WorkerFactory.newInstance(client);
     // Create the base worker options
     WorkerOptions.Builder workerOptions = WorkerOptions.newBuilder();
     // Workflow options
     workerOptions.setMaxConcurrentWorkflowTaskPollers(maxConcurrentWorkflowPollers);
     workerOptions.setMaxConcurrentWorkflowTaskExecutionSize(maxConcurrentWorkflowTasks);
-    workerOptions.setStickyQueueScheduleToStartTimeout(
-        Duration.ofMillis(stickyCacheScheduleToStartTimeoutMs));
     // Activity options
     workerOptions.setMaxConcurrentActivityTaskPollers(maxConcurrentActivityPollers);
     workerOptions.setMaxConcurrentActivityExecutionSize(maxConcurrentActivities);

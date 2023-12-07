@@ -9,16 +9,19 @@ import io.temporal.api.common.v1.WorkflowExecution;
 import io.temporal.api.enums.v1.ParentClosePolicy;
 import io.temporal.common.RetryOptions;
 import io.temporal.common.VersioningIntent;
+import io.temporal.failure.ActivityFailure;
 import io.temporal.failure.ApplicationFailure;
 import io.temporal.failure.CanceledFailure;
+import io.temporal.failure.ChildWorkflowFailure;
 import io.temporal.workflow.*;
+import org.slf4j.Logger;
+
+import javax.annotation.Nonnull;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import javax.annotation.Nonnull;
-import org.slf4j.Logger;
 
 public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
   public static final Logger log = Workflow.getLogger(KitchenSinkWorkflowImpl.class);
@@ -27,11 +30,8 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
 
   @Override
   public Payload execute(KitchenSink.WorkflowInput input) {
-    log.info("Started kitchen sink workflow");
     // Run all initial input actions
-    if (input != null
-        && input.getInitialActionsList() != null
-        && input.getInitialActionsList().size() > 0) {
+    if (input != null && input.getInitialActionsList().size() > 0) {
       for (KitchenSink.ActionSet actionSet : input.getInitialActionsList()) {
         Payload result = handleActionSet(actionSet);
         if (result != null) {
@@ -43,7 +43,7 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
 
     // Run all actions from signals
     while (true) {
-      KitchenSink.ActionSet actionSet = signalActionQueue.take();
+      KitchenSink.ActionSet actionSet = signalActionQueue.cancellableTake();
       Payload result = handleActionSet(actionSet);
       if (result != null) {
         return result;
@@ -53,7 +53,6 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
 
   @Override
   public void doActionsSignal(KitchenSink.DoSignal.DoSignalActions signalActions) {
-    log.info("Received signal");
     if (signalActions.hasDoActionsInMain()) {
       signalActionQueue.put(signalActions.getDoActionsInMain());
     } else {
@@ -63,7 +62,6 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
 
   @Override
   public Object doActionsUpdate(KitchenSink.DoActionsUpdate updateInput) {
-    log.info("Received update");
     Payload result = handleActionSet(updateInput.getDoActions());
     if (result != null) {
       return result;
@@ -74,15 +72,12 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
   @Override
   public void doActionsUpdateValidator(KitchenSink.DoActionsUpdate updateInput) {
     if (updateInput.hasRejectMe()) {
-      log.info("Rejected update");
       throw new RuntimeException("Rejected");
     }
   }
 
   @Override
   public KitchenSink.WorkflowState reportState(Object queryInput) {
-    log.info("Received query");
-
     return KitchenSink.WorkflowState.newBuilder().putAllKvs(state).build();
   }
 
@@ -107,13 +102,23 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
       results.add(
           Async.procedure(
               () -> {
-                Payload actionResult = handleAction(action);
-                if (actionResult != null) {
-                  returnResult.complete(actionResult);
+                try {
+                  Payload actionResult = handleAction(action);
+                  if (actionResult != null) {
+                    returnResult.complete(actionResult);
+                  }
+                } catch (Exception e) {
+                  returnResult.completeExceptionally(new RuntimeException(e));
+                  throw e;
                 }
               }));
     }
-    Promise.anyOf(Promise.allOf(results), returnResult).get();
+    Promise.anyOf(
+            Promise.allOf(results),
+            returnResult,
+            CancellationScope.current().getCancellationRequest())
+        .get();
+    CancellationScope.throwCanceled();
 
     if (returnResult.isCompleted()) {
       return returnResult.get();
@@ -122,9 +127,8 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
     }
   }
 
+  @SuppressWarnings("deprecation")
   private Payload handleAction(KitchenSink.Action action) {
-    log.info("Doing action " + action);
-
     if (action.hasReturnResult()) {
       KitchenSink.ReturnResultAction result = action.getReturnResult();
       return result.getReturnThis();
@@ -192,11 +196,11 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
     } else if (action.hasSetPatchMarker()) {
       KitchenSink.SetPatchMarkerAction patchMarker = action.getSetPatchMarker();
       if (Workflow.getVersion(patchMarker.getPatchId(), -1, 1) == 1) {
-        // TODO handle action
+        handleAction(patchMarker.getInnerAction());
       }
     } else if (action.hasUpsertMemo()) {
       // TODO(https://github.com/temporalio/sdk-java/issues/623) Java does not support upsert memo.
-      throw Workflow.wrap(new IllegalArgumentException("Java does not support upsert memo"));
+      log.warn("Java does not support upsert memo");
     } else {
       throw Workflow.wrap(new IllegalArgumentException("Unrecognized action type"));
     }
@@ -204,36 +208,24 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
   }
 
   private void launchChildWorkflow(KitchenSink.ExecuteChildWorkflowAction executeChildWorkflow) {
-    ChildWorkflowOptions.Builder childOptions =
-        ChildWorkflowOptions.newBuilder()
-            .setNamespace(executeChildWorkflow.getNamespace())
-            .setTaskQueue(executeChildWorkflow.getTaskQueue())
-            .setWorkflowId(executeChildWorkflow.getWorkflowId())
-            .setWorkflowIdReusePolicy(executeChildWorkflow.getWorkflowIdReusePolicy())
-            .setWorkflowExecutionTimeout(
-                toJavaDuration(executeChildWorkflow.getWorkflowExecutionTimeout()))
-            .setWorkflowRunTimeout(toJavaDuration(executeChildWorkflow.getWorkflowRunTimeout()))
-            .setWorkflowTaskTimeout(toJavaDuration(executeChildWorkflow.getWorkflowTaskTimeout()))
-            .setParentClosePolicy(getParentClosePolicy(executeChildWorkflow.getParentClosePolicy()))
-            .setVersioningIntent(getVersioningIntent(executeChildWorkflow.getVersioningIntent()));
-
     String childWorkflowType =
         executeChildWorkflow.getWorkflowType().isEmpty()
             ? "kitchenSink"
             : executeChildWorkflow.getWorkflowType();
+
     CancellationScope scope =
         Workflow.newCancellationScope(
             () -> {
-              ChildWorkflowStub stub =
-                  Workflow.newUntypedChildWorkflowStub(childWorkflowType, childOptions.build());
+              ChildWorkflowStub stub = Workflow.newUntypedChildWorkflowStub(childWorkflowType);
               Promise result =
-                  stub.executeAsync(Payload.class, executeChildWorkflow.getInputList().toArray());
+                  stub.executeAsync(Payload.class, executeChildWorkflow.getInputList().get(0));
               boolean expectCancelled = false;
               switch (executeChildWorkflow.getAwaitableChoice().getConditionCase()) {
                 case ABANDON:
                   return;
                 case CANCEL_BEFORE_STARTED:
                   CancellationScope.current().cancel();
+                  expectCancelled = true;
                   break;
                 case CANCEL_AFTER_STARTED:
                   stub.getExecution().get();
@@ -254,7 +246,10 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
               if (expectCancelled) {
                 try {
                   result.get();
-                } catch (CanceledFailure e) {
+                } catch (ChildWorkflowFailure e) {
+                  if (!(e.getCause() instanceof CanceledFailure)) {
+                    throw e;
+                  }
                 }
               }
             });
@@ -262,6 +257,16 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
   }
 
   private void launchActivity(KitchenSink.ExecuteActivityAction executeActivity) {
+    String activityType;
+    List<Object> args = new ArrayList<>();
+
+    if (executeActivity.hasDelay()) {
+      activityType = "delay";
+      args.add(executeActivity.getDelay());
+    } else {
+      activityType = "noop";
+    }
+
     RetryOptions.Builder retryOptions =
         RetryOptions.newBuilder()
             .setDoNotRetry(
@@ -306,12 +311,9 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
       CancellationScope scope =
           Workflow.newCancellationScope(
               () -> {
-                Promise<Object> activityResult =
+                Promise<Void> activityResult =
                     Workflow.newUntypedLocalActivityStub(builder.build())
-                        .executeAsync(
-                            executeActivity.getActivityType(),
-                            Object.class,
-                            executeActivity.getArgumentsList().toArray());
+                        .executeAsync(activityType, void.class, args.toArray());
                 handlePromise(activityResult, executeActivity.getAwaitableChoice());
               });
       scope.run();
@@ -341,12 +343,9 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
       CancellationScope scope =
           Workflow.newCancellationScope(
               () -> {
-                Promise<Object> activityResult =
+                Promise<Void> activityResult =
                     Workflow.newUntypedActivityStub(builder.build())
-                        .executeAsync(
-                            executeActivity.getActivityType(),
-                            Object.class,
-                            executeActivity.getArgumentsList().toArray());
+                        .executeAsync(activityType, void.class, args.toArray());
                 handlePromise(activityResult, executeActivity.getAwaitableChoice());
               });
       scope.run();
@@ -354,9 +353,6 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
   }
 
   private <V> void handlePromise(Promise<V> promise, KitchenSink.AwaitableChoice condition) {
-    log.info("Handling promise: " + condition.getConditionCase().name());
-
-    long currentTime = Workflow.currentTimeMillis();
     boolean expectCancelled = false;
     switch (condition.getConditionCase()) {
       case ABANDON:
@@ -367,7 +363,7 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
         break;
       case CANCEL_AFTER_STARTED:
         // Wait a workflow task
-        Workflow.await(() -> Workflow.currentTimeMillis() > currentTime);
+        Workflow.sleep(Duration.ofMillis(1));
         CancellationScope.current().cancel();
         expectCancelled = true;
         break;
@@ -385,6 +381,10 @@ public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
       try {
         promise.get();
       } catch (CanceledFailure e) {
+      } catch (ActivityFailure e) {
+        if (!(e.getCause() instanceof CanceledFailure)) {
+          throw e;
+        }
       }
     }
   }

@@ -6,11 +6,8 @@ import io.temporal.activity.ActivityMethod;
 @ActivityInterface
 public interface Activities {
   @ActivityMethod(name = "noop")
-  void noopActivity();
-
-  @ActivityMethod(name = "echo")
-  String echo(String input);
+  void noop();
 
   @ActivityMethod(name = "delay")
-  void delay(int milliseconds) throws InterruptedException;
+  void delay(com.google.protobuf.Duration d) throws InterruptedException;
 }
