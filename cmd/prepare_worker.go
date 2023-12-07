@@ -147,15 +147,10 @@ func (b *workerBuilder) buildPython(ctx context.Context, baseDir string) (sdkbui
 }
 
 func (b *workerBuilder) buildJava(ctx context.Context, baseDir string) (sdkbuild.Program, error) {
-	version := b.version
-	if version == "" {
-		version = "1.22.2"
-	}
-	// Build
 	prog, err := sdkbuild.BuildJavaProgram(ctx, sdkbuild.BuildJavaProgramOptions{
 		BaseDir:           baseDir,
 		DirName:           b.dirName,
-		Version:           version,
+		Version:           b.version,
 		MainClass:         "io.temporal.omes.Main",
 		HarnessDependency: "io.temporal:omes:0.1.0",
 		Build:             true,

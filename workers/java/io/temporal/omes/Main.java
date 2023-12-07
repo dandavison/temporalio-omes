@@ -190,7 +190,6 @@ public class Main implements Runnable {
       new JacksonJsonPayloadConverter()
     };
 
-    GlobalDataConverter.register(new DefaultDataConverter(arr));
     WorkflowClient client =
         WorkflowClient.newInstance(
             service,
