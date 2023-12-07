@@ -14,14 +14,13 @@ import io.temporal.failure.ApplicationFailure;
 import io.temporal.failure.CanceledFailure;
 import io.temporal.failure.ChildWorkflowFailure;
 import io.temporal.workflow.*;
-import org.slf4j.Logger;
-
-import javax.annotation.Nonnull;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import javax.annotation.Nonnull;
+import org.slf4j.Logger;
 
 public class KitchenSinkWorkflowImpl implements KitchenSinkWorkflow {
   public static final Logger log = Workflow.getLogger(KitchenSinkWorkflowImpl.class);
