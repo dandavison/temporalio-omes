@@ -1,4 +1,4 @@
-module github.com/temporalio/omes
+module github.com/dandavison/temporalio-omes
 
 go 1.20
 
