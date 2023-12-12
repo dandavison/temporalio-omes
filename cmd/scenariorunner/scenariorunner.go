@@ -46,8 +46,10 @@ func (r *ScenarioRunner) Run(ctx context.Context) error {
 	if r.Logger == nil {
 		r.Logger = r.LoggingOptions.MustCreateLogger()
 	}
-	r.Logger.Info("In ScenarioRunner.Run")
+	r.Logger.Infof("In ScenarioRunner.Run: scenario name: %s", r.Scenario)
+
 	scenario := loadgen.GetScenario(r.Scenario)
+	r.Logger.Infof("scenario object: %v", scenario)
 	if scenario == nil {
 		return fmt.Errorf("scenario not found")
 	} else if r.RunID == "" {
@@ -55,6 +57,7 @@ func (r *ScenarioRunner) Run(ctx context.Context) error {
 	} else if r.Iterations > 0 && r.Duration > 0 {
 		return fmt.Errorf("cannot provide both iterations and duration")
 	}
+	r.Logger.Infof("runId: %v, scenario: %v", r.RunID, r.Scenario)
 
 	// Parse options
 	scenarioOptions := make(map[string]string, len(r.ScenarioOptions))
@@ -83,6 +86,7 @@ func (r *ScenarioRunner) Run(ctx context.Context) error {
 		// Wait 300ms and try again
 		time.Sleep(300 * time.Millisecond)
 	}
+	r.Logger.Infof("Connected to server. client: %v", client)
 	defer client.Close()
 	scenarioInfo := loadgen.ScenarioInfo{
 		ScenarioName:   r.Scenario,

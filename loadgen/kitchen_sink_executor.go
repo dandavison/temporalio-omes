@@ -21,6 +21,7 @@ type KitchenSinkExecutor struct {
 }
 
 func (k KitchenSinkExecutor) Run(ctx context.Context, info ScenarioInfo) error {
+	info.Logger.Infof("In KitchenSinkExecutor.Run()")
 	if k.PrepareTestInput != nil {
 		if err := k.PrepareTestInput(ctx, info, k.TestInput); err != nil {
 			return err
@@ -42,6 +43,7 @@ func (k KitchenSinkExecutor) Run(ctx context.Context, info ScenarioInfo) error {
 					return err
 				}
 			}
+			info.Logger.Infof("In ge.Execute() options: %v", options)
 			return run.ExecuteKitchenSinkWorkflow(ctx, &options)
 		},
 	}
