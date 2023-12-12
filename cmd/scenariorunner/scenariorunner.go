@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/temporalio/omes/cmd/cmdoptions"
 	"github.com/temporalio/omes/loadgen"
+	"github.com/temporalio/omes/scenarios"
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 )
@@ -47,6 +48,7 @@ func (r *ScenarioRunner) Run(ctx context.Context) error {
 		r.Logger = r.LoggingOptions.MustCreateLogger()
 	}
 	r.Logger.Infof("In ScenarioRunner.Run: scenario name: %s", r.Scenario)
+	r.Logger.Infof("Printing this to satisfy the compiler: %v", scenarios.CANEventFlag)
 
 	scenario := loadgen.GetScenario(r.Scenario)
 	r.Logger.Infof("scenario object: %v", scenario)
