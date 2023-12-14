@@ -1,6 +1,0 @@
-apiVersion: v2
-name: temporal-omes-workers
-description: A Helm chart for installing Temporal omes workers
-type: application
-version: 0.1.0
-appVersion: '0.1.0'
